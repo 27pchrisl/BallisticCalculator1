@@ -55,5 +55,14 @@ namespace BallisticCalculator
         /// </summary>
         [BXmlProperty("maximum-distance")]
         public Measurement<DistanceUnit> MaximumDistance { get; set; }
+
+        /// <summary>
+        /// <para>Latitude of the shooting location</para>
+        /// <para>Used for Coriolis effect calculation. If not specified, Coriolis effect is not calculated.</para>
+        /// <para>Positive values are North, negative values are South.</para>
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        [BXmlProperty("latitude", Optional = true)]
+        public Measurement<AngularUnit>? Latitude { get; set; }
     }
 }
