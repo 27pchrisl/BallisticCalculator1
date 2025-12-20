@@ -37,6 +37,26 @@ namespace BallisticCalculator
         /// </summary>
         private const double EARTH_ANGULAR_VELOCITY = 7.292115e-5;
 
+        /// <summary>
+        /// Maximum characteristic time for aerodynamic jump development (seconds)
+        /// </summary>
+        private const double MaxJumpCharacteristicTime = 0.01;
+
+        /// <summary>
+        /// Maximum jump velocity as fraction of muzzle velocity (1% = 0.01)
+        /// </summary>
+        private const double MaxJumpVelocityFraction = 0.01;
+
+        /// <summary>
+        /// Minimum yaw angle estimate (radians)
+        /// </summary>
+        private const double MinYawAngleRadians = 0.001;
+
+        /// <summary>
+        /// Base yaw angle estimate coefficient (radians)
+        /// </summary>
+        private const double BaseYawAngleRadians = 0.002;
+
         private static DragTable ValidateDragTable(Ammunition ammunition, DragTable dragTable)
         {
             if (ammunition.BallisticCoefficient.Table == DragTableId.GC)
@@ -103,6 +123,10 @@ namespace BallisticCalculator
                 var velocityVector = new Vector<VelocityUnit>(velocity * barrelElevation.Cos() * barrelAzimuth.Cos(),
                                                               velocity * barrelElevation.Sin(),
                                                               velocity * barrelElevation.Cos() * barrelAzimuth.Sin());
+
+                var aerodynamicJump = CalculateAerodynamicJump(ammunition, rifle, atmosphere, velocity, barrelElevation, barrelAzimuth, alt0);
+                velocityVector = velocityVector + aerodynamicJump;
+                velocity = velocityVector.Magnitude;
 
                 Measurement<DistanceUnit> maximumRange = rangeTo;
                 Measurement<DistanceUnit> lastAtAltitude = new Measurement<DistanceUnit>(-1000000, DistanceUnit.Meter);
@@ -251,6 +275,10 @@ namespace BallisticCalculator
             var velocityVector = new Vector<VelocityUnit>(velocity * barrelElevation.Cos() * barrelAzimuth.Cos(),
                                                           velocity * barrelElevation.Sin(),
                                                           velocity * barrelElevation.Cos() * barrelAzimuth.Sin());
+
+            var aerodynamicJump = CalculateAerodynamicJump(ammunition, rifle, atmosphere, velocity, barrelElevation, barrelAzimuth, alt0);
+            velocityVector = velocityVector + aerodynamicJump;
+            velocity = velocityVector.Magnitude;
 
             int currentItem = 0;
             Measurement<DistanceUnit> maximumRange = rangeTo + calculationStep;
@@ -436,6 +464,109 @@ namespace BallisticCalculator
             Measurement<VelocityUnit> rangeFactor = -rangeVelocity * sightSine;
 
             return new Vector<VelocityUnit>(rangeVelocity * sightCosine, rangeFactor * cantCosine + crossComponent * cantSine, crossComponent * cantCosine - rangeFactor * cantSine);
+        }
+
+        private static Vector<VelocityUnit> CalculateAerodynamicJump(Ammunition ammunition, Rifle rifle, Atmosphere atmosphere, Measurement<VelocityUnit> muzzleVelocity, Measurement<AngularUnit> barrelElevation, Measurement<AngularUnit> barrelAzimuth, Measurement<DistanceUnit> muzzleAltitude)
+        {
+            if (rifle.Rifling == null || ammunition.BulletDiameter == null || ammunition.BulletLength == null)
+                return new Vector<VelocityUnit>(new Measurement<VelocityUnit>(0, muzzleVelocity.Unit),
+                                               new Measurement<VelocityUnit>(0, muzzleVelocity.Unit),
+                                               new Measurement<VelocityUnit>(0, muzzleVelocity.Unit));
+
+            atmosphere.AtAltitude(muzzleAltitude, out double densityFactor, out _);
+            Measurement<DensityUnit> airDensity = Atmosphere.StandardDensity * densityFactor;
+
+            // Spin rate = 2π * (velocity / rifling_step)
+            double revolutionsPerSecond = muzzleVelocity.In(VelocityUnit.FeetPerSecond) / rifle.Rifling.RiflingStep.In(DistanceUnit.Foot);
+            double spinRateRadPerSec = 2.0 * Math.PI * revolutionsPerSecond;
+
+            // Estimate initial yaw angle (typically 0.1-0.5 degrees for well-made bullets)
+            // Yaw angle can be estimated based on bullet length-to-diameter ratio and stability
+            double lengthToDiameterRatio = ammunition.BulletLength.Value.In(DistanceUnit.Inch) / ammunition.BulletDiameter.Value.In(DistanceUnit.Inch);
+            double estimatedYawAngleRadians = Math.Max(MinYawAngleRadians, BaseYawAngleRadians * (1.0 + 0.1 * (lengthToDiameterRatio - 1.0))); // ~0.1-0.3 degrees
+
+            // Aerodynamic jump is caused by Magnus effect: F_magnus = (π/8) * ρ * d^3 * ω * v * sin(yaw)
+            // Where: ρ = air density, d = diameter, ω = spin rate, v = velocity, yaw = yaw angle
+            // Jump velocity ≈ (F_magnus / mass) * characteristic_time
+
+            // Magnus force magnitude (simplified)
+            // F_magnus ≈ (π/8) * ρ * d^3 * ω * v * yaw
+            double airDensityKgPerM3 = airDensity.In(DensityUnit.KilogramPerCubicMeter);
+            double diameterMeters = ammunition.BulletDiameter.Value.In(DistanceUnit.Meter);
+            double velocityMetersPerSec = muzzleVelocity.In(VelocityUnit.MetersPerSecond);
+
+            // Magnus force in Newtons: F = (π/8) * ρ * d^3 * ω * v * yaw
+            // Where: ρ (kg/m³), d (m), ω (rad/s), v (m/s), yaw (rad)
+            // Result: F (N) = kg·m/s²
+            double magnusForceN = (Math.PI / 8.0) * airDensityKgPerM3 *
+                                  Math.Pow(diameterMeters, 3) *
+                                  spinRateRadPerSec * velocityMetersPerSec * estimatedYawAngleRadians;
+
+            // Jump acceleration = F_magnus / mass
+            // Force (N) / mass (kg) = acceleration (m/s²)
+            double massKg = ammunition.Weight.In(WeightUnit.Kilogram);
+            double jumpAccelerationMetersPerSec2 = magnusForceN / massKg;
+
+            // Characteristic time for jump development
+            // Time = distance / velocity - extract values in consistent units
+            double characteristicTimeSeconds = ammunition.BulletLength.Value.In(DistanceUnit.Meter) / muzzleVelocity.In(VelocityUnit.MetersPerSecond);
+            double characteristicTimeLimitedSeconds = Math.Min(characteristicTimeSeconds, MaxJumpCharacteristicTime);
+
+            // Jump velocity magnitude = acceleration * characteristic_time
+            // acceleration (m/s²) * time (s) = velocity (m/s)
+            double jumpVelocityMetersPerSec = jumpAccelerationMetersPerSec2 * characteristicTimeLimitedSeconds;
+            Measurement<VelocityUnit> jumpVelocityMagnitude = new Measurement<VelocityUnit>(
+                jumpVelocityMetersPerSec,
+                VelocityUnit.MetersPerSecond);
+
+            // Limit jump to physically reasonable values (< 1% of muzzle velocity)
+            Measurement<VelocityUnit> maxJump = muzzleVelocity * MaxJumpVelocityFraction;
+            if (jumpVelocityMagnitude > maxJump)
+                jumpVelocityMagnitude = maxJump;
+
+            // Aerodynamic jump direction:
+            // - Vertical component: depends on spin direction and yaw orientation
+            //   For right-hand twist: typically causes upward jump (positive Y)
+            //   For left-hand twist: typically causes downward jump (negative Y)
+            // - Horizontal component: perpendicular to the spin axis in the horizontal plane
+            //   Direction depends on the interaction between spin and yaw
+
+            // The jump is perpendicular to both the velocity vector and the spin axis
+            // Spin axis is along the velocity direction, so jump is perpendicular to velocity
+            // In practice, jump has both vertical and horizontal components
+
+            double twistDirectionSign = rifle.Rifling.Direction == TwistDirection.Right ? 1.0 : -1.0;
+
+            // Vertical jump component (typically small, ~0.1-1% of velocity)
+            // Right-hand twist typically causes slight upward jump
+            double verticalJumpFactor = twistDirectionSign * 0.5; // Vertical component factor
+
+            // Horizontal jump component (perpendicular to velocity in horizontal plane)
+            // This is typically smaller than vertical and depends on yaw orientation
+            double horizontalJumpFactor = twistDirectionSign * 0.3; // Horizontal component factor
+
+            // Calculate jump components in the coordinate system:
+            // X: downrange (along velocity), Y: vertical (up), Z: horizontal (left positive)
+            // Jump is perpendicular to velocity, so it has Y and Z components but minimal X component
+
+            double azimuthCos = barrelAzimuth.Cos();
+
+            Measurement<VelocityUnit> jumpVelocityInMuzzleUnit = jumpVelocityMagnitude.To(muzzleVelocity.Unit);
+
+            // Jump vector in local coordinates (perpendicular to velocity)
+            // Vertical component (Y) - upward for right twist
+            double jumpY = verticalJumpFactor * jumpVelocityInMuzzleUnit.Value;
+
+            // Horizontal component (Z) - depends on azimuth and twist direction
+            double jumpZ = horizontalJumpFactor * jumpVelocityInMuzzleUnit.Value * azimuthCos;
+
+            // Minimal downrange component (X)
+            double jumpX = 0.0;
+
+            return new Vector<VelocityUnit>(
+                new Measurement<VelocityUnit>(jumpX, muzzleVelocity.Unit),
+                new Measurement<VelocityUnit>(jumpY, muzzleVelocity.Unit),
+                new Measurement<VelocityUnit>(jumpZ, muzzleVelocity.Unit));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -496,5 +496,184 @@ namespace BallisticCalculator.Test.Calculator
 
             (windageDiff + dropDiff).Should().BeGreaterThan(0.01);
         }
+
+        [Fact]
+        public void AerodynamicJump_AffectsTrajectory_WhenRiflingDataPresent()
+        {
+            // Arrange - Test that aerodynamic jump affects trajectory when rifling data is present
+            Ammunition ammunition = new Ammunition(
+                weight: new Measurement<WeightUnit>(69, WeightUnit.Grain),
+                muzzleVelocity: new Measurement<VelocityUnit>(2600, VelocityUnit.FeetPerSecond),
+                ballisticCoefficient: new BallisticCoefficient(0.365, DragTableId.G1),
+                bulletDiameter: new Measurement<DistanceUnit>(0.224, DistanceUnit.Inch),
+                bulletLength: new Measurement<DistanceUnit>(0.8, DistanceUnit.Inch));
+
+            Rifle rifleWithRifling = new Rifle(
+                sight: new Sight(sightHeight: new Measurement<DistanceUnit>(3.2, DistanceUnit.Inch), Measurement<AngularUnit>.ZERO, Measurement<AngularUnit>.ZERO),
+                zero: new ZeroingParameters(distance: new Measurement<DistanceUnit>(100, DistanceUnit.Yard), ammunition: null, atmosphere: null),
+                rifling: new Rifling(new Measurement<DistanceUnit>(12, DistanceUnit.Inch), TwistDirection.Right));
+
+            Rifle rifleWithoutRifling = new Rifle(
+                sight: new Sight(sightHeight: new Measurement<DistanceUnit>(3.2, DistanceUnit.Inch), Measurement<AngularUnit>.ZERO, Measurement<AngularUnit>.ZERO),
+                zero: new ZeroingParameters(distance: new Measurement<DistanceUnit>(100, DistanceUnit.Yard), ammunition: null, atmosphere: null),
+                rifling: null); // No rifling - no aerodynamic jump
+
+            Atmosphere atmosphere = new Atmosphere();
+            var calculator = new TrajectoryCalculator();
+
+            ShotParameters shot = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(500, DistanceUnit.Yard),
+                SightAngle = calculator.SightAngle(ammunition, rifleWithRifling, atmosphere),
+                ShotAngle = null,
+                CantAngle = null,
+            };
+
+            // Act
+            var trajectoryWithRifling = calculator.Calculate(ammunition, rifleWithRifling, atmosphere, shot, null);
+            var trajectoryWithoutRifling = calculator.Calculate(ammunition, rifleWithoutRifling, atmosphere, shot, null);
+
+            // Assert
+            // Trajectories should differ due to aerodynamic jump
+            // The difference should be small but measurable at longer distances
+            trajectoryWithRifling.Length.Should().BeGreaterThan(0);
+            trajectoryWithoutRifling.Length.Should().BeGreaterThan(0);
+            
+            // At longer distances, the trajectories should differ
+            if (trajectoryWithRifling.Length > 5 && trajectoryWithoutRifling.Length > 5)
+            {
+                var pointWithRifling = trajectoryWithRifling[trajectoryWithRifling.Length - 1];
+                var pointWithoutRifling = trajectoryWithoutRifling[trajectoryWithoutRifling.Length - 1];
+                
+                // Windage or drop should differ (aerodynamic jump affects initial velocity)
+                var windageDiff = Math.Abs(pointWithRifling.Windage.In(DistanceUnit.Inch) - pointWithoutRifling.Windage.In(DistanceUnit.Inch));
+                // At 500 yards, aerodynamic jump should produce measurable difference (even if small)
+                // The exact value depends on the implementation, but there should be some difference
+                (windageDiff > 0.001 || Math.Abs(pointWithRifling.Drop.In(DistanceUnit.Inch) - pointWithoutRifling.Drop.In(DistanceUnit.Inch)) > 0.001)
+                    .Should().BeTrue("Trajectories with and without rifling should differ due to aerodynamic jump");
+            }
+        }
+
+        [Fact]
+        public void AerodynamicJump_DifferentTwistDirections_ProduceDifferentTrajectories()
+        {
+            // Arrange
+            Ammunition ammunition = new Ammunition(
+                weight: new Measurement<WeightUnit>(69, WeightUnit.Grain),
+                muzzleVelocity: new Measurement<VelocityUnit>(2600, VelocityUnit.FeetPerSecond),
+                ballisticCoefficient: new BallisticCoefficient(0.365, DragTableId.G1),
+                bulletDiameter: new Measurement<DistanceUnit>(0.224, DistanceUnit.Inch),
+                bulletLength: new Measurement<DistanceUnit>(0.8, DistanceUnit.Inch));
+
+            Rifle rifleRight = new Rifle(
+                sight: new Sight(sightHeight: new Measurement<DistanceUnit>(3.2, DistanceUnit.Inch), Measurement<AngularUnit>.ZERO, Measurement<AngularUnit>.ZERO),
+                zero: new ZeroingParameters(distance: new Measurement<DistanceUnit>(100, DistanceUnit.Yard), ammunition: null, atmosphere: null),
+                rifling: new Rifling(new Measurement<DistanceUnit>(12, DistanceUnit.Inch), TwistDirection.Right));
+
+            Rifle rifleLeft = new Rifle(
+                sight: new Sight(sightHeight: new Measurement<DistanceUnit>(3.2, DistanceUnit.Inch), Measurement<AngularUnit>.ZERO, Measurement<AngularUnit>.ZERO),
+                zero: new ZeroingParameters(distance: new Measurement<DistanceUnit>(100, DistanceUnit.Yard), ammunition: null, atmosphere: null),
+                rifling: new Rifling(new Measurement<DistanceUnit>(12, DistanceUnit.Inch), TwistDirection.Left));
+
+            Atmosphere atmosphere = new Atmosphere();
+            var calculator = new TrajectoryCalculator();
+
+            ShotParameters shot = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(500, DistanceUnit.Yard),
+                SightAngle = calculator.SightAngle(ammunition, rifleRight, atmosphere),
+                ShotAngle = null,
+                CantAngle = null,
+            };
+
+            // Act
+            var trajectoryRight = calculator.Calculate(ammunition, rifleRight, atmosphere, shot, null);
+            var trajectoryLeft = calculator.Calculate(ammunition, rifleLeft, atmosphere, shot, null);
+
+            // Assert
+            // Different twist directions should produce different trajectories
+            // The windage should be opposite (or at least different)
+            trajectoryRight.Length.Should().BeGreaterThan(0);
+            trajectoryLeft.Length.Should().BeGreaterThan(0);
+            
+            if (trajectoryRight.Length > 5 && trajectoryLeft.Length > 5)
+            {
+                var pointRight = trajectoryRight[trajectoryRight.Length - 1];
+                var pointLeft = trajectoryLeft[trajectoryLeft.Length - 1];
+                
+                // Windage should differ (opposite directions for opposite twist)
+                var windageDiff = Math.Abs(pointRight.Windage.In(DistanceUnit.Inch) - pointLeft.Windage.In(DistanceUnit.Inch));
+                windageDiff.Should().BeGreaterThan(0.001, "Different twist directions should produce different windage");
+            }
+        }
+
+        [Fact]
+        public void AerodynamicJump_VariesWithAltitude()
+        {
+            // Arrange
+            Ammunition ammunition = new Ammunition(
+                weight: new Measurement<WeightUnit>(69, WeightUnit.Grain),
+                muzzleVelocity: new Measurement<VelocityUnit>(2600, VelocityUnit.FeetPerSecond),
+                ballisticCoefficient: new BallisticCoefficient(0.365, DragTableId.G1),
+                bulletDiameter: new Measurement<DistanceUnit>(0.224, DistanceUnit.Inch),
+                bulletLength: new Measurement<DistanceUnit>(0.8, DistanceUnit.Inch));
+
+            Rifle rifle = new Rifle(
+                sight: new Sight(sightHeight: new Measurement<DistanceUnit>(3.2, DistanceUnit.Inch), Measurement<AngularUnit>.ZERO, Measurement<AngularUnit>.ZERO),
+                zero: new ZeroingParameters(distance: new Measurement<DistanceUnit>(100, DistanceUnit.Yard), ammunition: null, atmosphere: null),
+                rifling: new Rifling(new Measurement<DistanceUnit>(12, DistanceUnit.Inch), TwistDirection.Right));
+
+            Atmosphere atmosphereSeaLevel = new Atmosphere(
+                altitude: new Measurement<DistanceUnit>(0, DistanceUnit.Foot),
+                pressure: new Measurement<PressureUnit>(29.92, PressureUnit.InchesOfMercury),
+                pressureAtSeaLevel: false,
+                temperature: new Measurement<TemperatureUnit>(59, TemperatureUnit.Fahrenheit),
+                humidity: 0.0);
+
+            Atmosphere atmosphereHighAltitude = new Atmosphere(
+                altitude: new Measurement<DistanceUnit>(10000, DistanceUnit.Foot),
+                pressure: new Measurement<PressureUnit>(20.58, PressureUnit.InchesOfMercury), // Approximate at 10k ft
+                pressureAtSeaLevel: false,
+                temperature: new Measurement<TemperatureUnit>(23.3, TemperatureUnit.Fahrenheit), // Approximate at 10k ft
+                humidity: 0.0);
+
+            var calculator = new TrajectoryCalculator();
+
+            ShotParameters shot = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(500, DistanceUnit.Yard),
+                SightAngle = calculator.SightAngle(ammunition, rifle, atmosphereSeaLevel),
+                ShotAngle = null,
+                CantAngle = null,
+            };
+
+            // Act
+            var trajectorySeaLevel = calculator.Calculate(ammunition, rifle, atmosphereSeaLevel, shot, null);
+            var trajectoryHighAltitude = calculator.Calculate(ammunition, rifle, atmosphereHighAltitude, shot, null);
+
+            // Assert
+            // Higher altitude has lower air density, so aerodynamic jump should be smaller
+            // This should result in slightly different trajectories
+            trajectorySeaLevel.Length.Should().BeGreaterThan(0);
+            trajectoryHighAltitude.Length.Should().BeGreaterThan(0);
+            
+            // The trajectories should differ due to different air density affecting aerodynamic jump
+            // The exact difference depends on implementation, but there should be some measurable difference
+            if (trajectorySeaLevel.Length > 5 && trajectoryHighAltitude.Length > 5)
+            {
+                var pointSeaLevel = trajectorySeaLevel[trajectorySeaLevel.Length - 1];
+                var pointHighAltitude = trajectoryHighAltitude[trajectoryHighAltitude.Length - 1];
+                
+                // At least one component should differ
+                var windageDiff = Math.Abs(pointSeaLevel.Windage.In(DistanceUnit.Inch) - pointHighAltitude.Windage.In(DistanceUnit.Inch));
+                var dropDiff = Math.Abs(pointSeaLevel.Drop.In(DistanceUnit.Inch) - pointHighAltitude.Drop.In(DistanceUnit.Inch));
+                
+                (windageDiff > 0.001 || dropDiff > 0.001)
+                    .Should().BeTrue("Trajectories at different altitudes should differ due to aerodynamic jump variation");
+            }
+        }
     }
 }
