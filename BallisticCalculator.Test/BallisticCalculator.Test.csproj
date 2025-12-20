@@ -10,10 +10,12 @@
     <None Remove="resources\drg.txt" />
     <None Remove="resources\drg2.txt" />
     <None Remove="resources\g1_nowind.txt" />
+    <None Remove="resources\g1_nowind_coriolis.txt" />
     <None Remove="resources\g1_nowind_up.txt" />
     <None Remove="resources\g1_twist.txt" />
     <None Remove="resources\g1_wind.txt" />
     <None Remove="resources\g1_wind_cold.txt" />
+    <None Remove="resources\g1_wind_coriolis.txt" />
     <None Remove="resources\g1_wind_hot.txt" />
     <None Remove="resources\g7_nowind.txt" />
   </ItemGroup>
@@ -22,8 +24,10 @@
     <EmbeddedResource Include="resources\custom2.txt" />
     <EmbeddedResource Include="resources\custom.txt" />
     <EmbeddedResource Include="resources\drg2.txt" />
+    <EmbeddedResource Include="resources\g1_nowind_coriolis.txt" />
     <EmbeddedResource Include="resources\g1_nowind_up.txt" />
     <EmbeddedResource Include="resources\g1_twist.txt" />
+    <EmbeddedResource Include="resources\g1_wind_coriolis.txt" />
     <EmbeddedResource Include="resources\g7_nowind.txt" />
     <EmbeddedResource Include="resources\g1_nowind.txt" />
     <EmbeddedResource Include="resources\g1_wind_cold.txt" />

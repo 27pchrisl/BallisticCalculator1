@@ -68,6 +68,8 @@ namespace BallisticCalculator.Test.Calculator
         [InlineData("g1_wind", 0.005, 0.2, 0.2)]
         [InlineData("g1_wind_hot", 0.005, 0.2, 0.2)]
         [InlineData("g1_wind_cold", 0.005, 0.2, 0.2)]
+        [InlineData("g1_nowind_coriolis", 0.005, 0.2, 0.2)]
+        [InlineData("g1_wind_coriolis", 0.005, 0.2, 0.2)]
         public void TrajectoryTest(string name, double velocityAccuracyInPercent, double dropAccuracyInMOA, double windageAccuracyInMOA)
         {
             TableLoader template = TableLoader.FromResource(name);
@@ -81,6 +83,8 @@ namespace BallisticCalculator.Test.Calculator
                 SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
                 ShotAngle = template.ShotParameters?.ShotAngle,
                 CantAngle = template.ShotParameters?.CantAngle,
+                Latitude = template.ShotParameters?.Latitude, // Use latitude from test data if present (for Coriolis effect)
+                BarrelAzimuth = template.ShotParameters?.BarrelAzimuth // Use azimuth from test data if present
             };
 
             var winds = template.Wind == null ? null : new Wind[] { template.Wind };
@@ -323,6 +327,200 @@ namespace BallisticCalculator.Test.Calculator
                     point.Drop.In(DistanceUnit.Inch).Should().BeApproximately(templatePoint.Drop.In(DistanceUnit.Inch), dropAccuracyInInch, $"@{point.Distance:N0}");
                 }
             }
+        }
+
+        [Fact]
+        public void CoriolisEffect_NoLatitude_NoEffect()
+        {
+            var template = TableLoader.FromResource("g1_nowind");
+            var cal = new TrajectoryCalculator();
+
+            var shotWithoutLatitude = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = template.ShotParameters?.BarrelAzimuth,
+                Latitude = null
+            };
+
+            var shotWithLatitude = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = template.ShotParameters?.BarrelAzimuth,
+                Latitude = new Measurement<AngularUnit>(45, AngularUnit.Degree)
+            };
+
+            var winds = template.Wind == null ? null : new Wind[] { template.Wind };
+            var trajectoryWithoutLatitude = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotWithoutLatitude, winds);
+            var trajectoryWithLatitude = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotWithLatitude, winds);
+
+            trajectoryWithoutLatitude[0].Windage.In(DistanceUnit.Inch).Should().BeApproximately(
+                trajectoryWithLatitude[0].Windage.In(DistanceUnit.Inch), 0.001);
+        }
+
+        [Fact]
+        public void CoriolisEffect_LatitudeAffectsWindage()
+        {
+            var template = TableLoader.FromResource("g1_nowind");
+            var cal = new TrajectoryCalculator();
+
+            var shotWithoutLatitude = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = template.ShotParameters?.BarrelAzimuth,
+                Latitude = null
+            };
+
+            var shotWithLatitude = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = template.ShotParameters?.BarrelAzimuth,
+                Latitude = new Measurement<AngularUnit>(45, AngularUnit.Degree)
+            };
+
+            var winds = template.Wind == null ? null : new Wind[] { template.Wind };
+            var trajectoryWithoutLatitude = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotWithoutLatitude, winds);
+            var trajectoryWithLatitude = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotWithLatitude, winds);
+
+            var lastWithout = trajectoryWithoutLatitude.Last();
+            var lastWith = trajectoryWithLatitude.Last();
+
+            Math.Abs(lastWith.Windage.In(DistanceUnit.Inch) - lastWithout.Windage.In(DistanceUnit.Inch))
+                .Should().BeGreaterThan(0.005);
+        }
+
+        [Fact]
+        public void CoriolisEffect_LatitudeAffectsDrop()
+        {
+            var template = TableLoader.FromResource("g1_nowind");
+            var cal = new TrajectoryCalculator();
+
+            var shotWithoutLatitude = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = new Measurement<AngularUnit>(45, AngularUnit.Degree),
+                Latitude = null
+            };
+
+            var shotWithLatitude = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = new Measurement<AngularUnit>(45, AngularUnit.Degree),
+                Latitude = new Measurement<AngularUnit>(45, AngularUnit.Degree)
+            };
+
+            var winds = template.Wind == null ? null : new Wind[] { template.Wind };
+            var trajectoryWithoutLatitude = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotWithoutLatitude, winds);
+            var trajectoryWithLatitude = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotWithLatitude, winds);
+
+            var lastWithout = trajectoryWithoutLatitude.Last();
+            var lastWith = trajectoryWithLatitude.Last();
+
+            Math.Abs(lastWith.Drop.In(DistanceUnit.Inch) - lastWithout.Drop.In(DistanceUnit.Inch))
+                .Should().BeGreaterThan(0.005);
+        }
+
+        [Fact]
+        public void CoriolisEffect_DependsOnLatitude()
+        {
+            var template = TableLoader.FromResource("g1_nowind");
+            var cal = new TrajectoryCalculator();
+
+            var shotLowLatitude = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = new Measurement<AngularUnit>(0, AngularUnit.Degree),
+                Latitude = new Measurement<AngularUnit>(10, AngularUnit.Degree)
+            };
+
+            var shotHighLatitude = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = new Measurement<AngularUnit>(0, AngularUnit.Degree),
+                Latitude = new Measurement<AngularUnit>(60, AngularUnit.Degree)
+            };
+
+            var winds = template.Wind == null ? null : new Wind[] { template.Wind };
+            var trajectoryLowLatitude = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotLowLatitude, winds);
+            var trajectoryHighLatitude = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotHighLatitude, winds);
+
+            var lastLow = trajectoryLowLatitude.Last();
+            var lastHigh = trajectoryHighLatitude.Last();
+
+            Math.Abs(lastHigh.Windage.In(DistanceUnit.Inch))
+                .Should().BeGreaterThan(Math.Abs(lastLow.Windage.In(DistanceUnit.Inch)));
+        }
+
+        [Fact]
+        public void CoriolisEffect_DependsOnAzimuth()
+        {
+            var template = TableLoader.FromResource("g1_nowind");
+            var cal = new TrajectoryCalculator();
+
+            var shotNorth = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = new Measurement<AngularUnit>(0, AngularUnit.Degree),
+                Latitude = new Measurement<AngularUnit>(45, AngularUnit.Degree)
+            };
+
+            var shotNE = new ShotParameters()
+            {
+                Step = new Measurement<DistanceUnit>(50, DistanceUnit.Yard),
+                MaximumDistance = new Measurement<DistanceUnit>(1000, DistanceUnit.Yard),
+                SightAngle = cal.SightAngle(template.Ammunition, template.Rifle, template.Atmosphere),
+                ShotAngle = template.ShotParameters?.ShotAngle,
+                CantAngle = template.ShotParameters?.CantAngle,
+                BarrelAzimuth = new Measurement<AngularUnit>(45, AngularUnit.Degree),
+                Latitude = new Measurement<AngularUnit>(45, AngularUnit.Degree)
+            };
+
+            var winds = template.Wind == null ? null : new Wind[] { template.Wind };
+            var trajectoryNorth = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotNorth, winds);
+            var trajectoryNE = cal.Calculate(template.Ammunition, template.Rifle, template.Atmosphere, shotNE, winds);
+
+            var lastNorth = trajectoryNorth.Last();
+            var lastNE = trajectoryNE.Last();
+
+            var windageDiff = Math.Abs(Math.Abs(lastNorth.Windage.In(DistanceUnit.Inch)) - Math.Abs(lastNE.Windage.In(DistanceUnit.Inch)));
+            var dropDiff = Math.Abs(Math.Abs(lastNorth.Drop.In(DistanceUnit.Inch)) - Math.Abs(lastNE.Drop.In(DistanceUnit.Inch)));
+
+            (windageDiff + dropDiff).Should().BeGreaterThan(0.01);
         }
     }
 }

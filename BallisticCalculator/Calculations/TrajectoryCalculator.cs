@@ -32,6 +32,11 @@ namespace BallisticCalculator
         /// </summary>
         private const double PIR = 2.08551e-04;
 
+        /// <summary>
+        /// Earth's angular velocity in radians per second
+        /// </summary>
+        private const double EARTH_ANGULAR_VELOCITY = 7.292115e-5;
+
         private static DragTable ValidateDragTable(Ammunition ammunition, DragTable dragTable)
         {
             if (ammunition.BallisticCoefficient.Table == DragTableId.GC)
@@ -291,6 +296,18 @@ namespace BallisticCalculator
 
                 if (distance >= nextRangeDistance)
                 {
+                    // Apply Coriolis effect to rangeVector if latitude is specified
+                    if (shot.Latitude != null)
+                    {
+                        var coriolisDeflection = CalculateCoriolisDeflection(
+                            shot.Latitude.Value,
+                            barrelAzimuth,
+                            time,
+                            velocityVector.X,
+                            velocityVector.Z);
+                        rangeVector += coriolisDeflection;
+                    }
+
                     var windage = rangeVector.Z;
                     
                     if (calculateDrift)
@@ -442,6 +459,44 @@ namespace BallisticCalculator
                 ftp = ((ft + 460) / (59 + 460)) * (29.92 / pt);
             }
             return sd * fv * ftp;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector<DistanceUnit> CalculateCoriolisDeflection(
+            Measurement<AngularUnit> latitude,
+            Measurement<AngularUnit> azimuth,
+            TimeSpan time,
+            Measurement<VelocityUnit> velocityX,
+            Measurement<VelocityUnit> velocityZ)
+        {
+            double latRad = latitude.In(AngularUnit.Radian);
+            double azRad = azimuth.In(AngularUnit.Radian);
+            double t = time.TotalSeconds;
+
+            double vx = velocityX.In(VelocityUnit.MetersPerSecond);
+            double vz = velocityZ.In(VelocityUnit.MetersPerSecond);
+
+            double omega = EARTH_ANGULAR_VELOCITY;
+            double sinLat = Math.Sin(latRad);
+            double cosLat = Math.Cos(latRad);
+            double sinAz = Math.Sin(azRad);
+            double cosAz = Math.Cos(azRad);
+
+            double horizontalVel = Math.Sqrt(vx * vx + vz * vz);
+            double vNorth = horizontalVel * cosAz;
+            double vEast = horizontalVel * sinAz;
+
+            double eastDeflection = omega * sinLat * t * t * vNorth;
+            double verticalDeflection = omega * cosLat * t * t * vEast;
+
+            double windageDeflection = eastDeflection;
+            double dropDeflection = -verticalDeflection;
+
+            return new Vector<DistanceUnit>(
+                new Measurement<DistanceUnit>(0, DistanceUnit.Meter),
+                new Measurement<DistanceUnit>(dropDeflection, DistanceUnit.Meter),
+                new Measurement<DistanceUnit>(windageDeflection, DistanceUnit.Meter)
+            );
         }
     }
 }
